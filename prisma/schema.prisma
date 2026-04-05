@@ -1,0 +1,51 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model MetricSnapshot {
+  id          String   @id @default(cuid())
+  namespace   String
+  nodeName    String?
+  cpuUsage    Float
+  memoryUsage Float
+  podCount    Int
+  recordedAt  DateTime @default(now())
+
+  @@index([namespace])
+  @@index([recordedAt])
+}
+
+model Alert {
+  id           String    @id @default(cuid())
+  type         AlertType
+  severity     Severity
+  namespace    String
+  resourceName String
+  message      String
+  resolved     Boolean   @default(false)
+  createdAt    DateTime  @default(now())
+  resolvedAt   DateTime?
+
+  @@index([resolved])
+  @@index([namespace])
+  @@index([createdAt])
+}
+
+enum AlertType {
+  CRASH_LOOP
+  HIGH_CPU
+  HIGH_MEMORY
+  DEPLOYMENT_FAILED
+  NODE_NOT_READY
+}
+
+enum Severity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
