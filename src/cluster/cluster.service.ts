@@ -68,8 +68,7 @@ export class ClusterService {
 
     // Get the cluster name from kubeconfig
     // This is the name defined in your ~/.kube/config file
-    const clusterName =
-      this.kubernetesService['kc'].getCurrentCluster()?.name ?? 'unknown';
+    const clusterName = this.kubernetesService.getClusterName();
 
     return {
       clusterName,
