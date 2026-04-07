@@ -54,8 +54,6 @@ export class MetricsCollector implements OnModuleInit {
 
   private async collectSnapshot() {
     try {
-      // Fetch all data in parallel — these all hit Redis cache
-      // so this is fast and doesn't hammer the k8s API
       const [nodes, pods, deployments, namespaces] = await Promise.all([
         this.kubernetesService.getAllNodes(),
         this.kubernetesService.getAllPods(),
@@ -63,81 +61,114 @@ export class MetricsCollector implements OnModuleInit {
         this.kubernetesService.getAllNamespaces(),
       ]);
 
-      // Parse CPU capacity from node resources
-      // We sum across all nodes to get total cluster CPU
       const totalCPU = nodes.reduce((sum, node) => {
         const cpu = node.status?.capacity?.cpu ?? '0';
         return sum + this.parseCPU(cpu);
       }, 0);
 
-      // Parse memory capacity from node resources
-      // Convert everything to bytes for consistent storage
       const totalMemoryBytes = nodes.reduce((sum, node) => {
         const mem = node.status?.capacity?.memory ?? '0Ki';
         return sum + this.parseMemoryToBytes(mem);
       }, 0);
 
-      const runningPods = pods.filter(
-        (p) => p.status?.phase === 'Running',
-      ).length;
+      const totalMemoryGi = totalMemoryBytes / (1024 * 1024 * 1024);
 
-      // ------- Start storing in to database
-      // Store one snapshot per namespace so we can query
-      // per-namespace trends over time
-      const snapshotPromises = namespaces.map((ns) => {
+      // Build snapshot data for every namespace + cluster-wide
+      const snapshotsToEvaluate: Array<{
+        namespace: string;
+        cpuUsage: number;
+        memoryUsage: number;
+        podCount: number;
+      }> = [];
+
+      // Per-namespace snapshots
+      for (const ns of namespaces) {
         const namespaceName = ns.metadata?.name ?? 'unknown';
-
         const namespacePods = pods.filter(
           (p) => p.metadata?.namespace === namespaceName,
         );
-
-        const namespacePodCount = namespacePods.length;
-        const namespaceRunning = namespacePods.filter(
-          (p) => p.status?.phase === 'Running',
-        ).length;
-
-        // Store CPU and memory as a fraction of total cluster capacity
-        // scoped to the namespace's share of running pods
         const podFraction =
-          pods.length > 0 ? namespacePodCount / pods.length : 0;
+          pods.length > 0 ? namespacePods.length / pods.length : 0;
 
-        return this.prismaService.metricSnapshot.create({
-          data: {
-            namespace: namespaceName,
-            // Allocate cluster resources proportionally by pod count
-            // This is an approximation — real per-pod metrics
-            // would require the Metrics Server API
-            cpuUsage: totalCPU * podFraction,
-            memoryUsage:
-              (totalMemoryBytes / (1024 * 1024 * 1024)) * podFraction,
-            podCount: namespacePodCount,
-          },
+        snapshotsToEvaluate.push({
+          namespace: namespaceName,
+          cpuUsage: totalCPU * podFraction,
+          memoryUsage: totalMemoryGi * podFraction,
+          podCount: namespacePods.length,
         });
+      }
+
+      // Cluster-wide snapshot
+      snapshotsToEvaluate.push({
+        namespace: '__cluster__',
+        cpuUsage: totalCPU,
+        memoryUsage: totalMemoryGi,
+        podCount: pods.length,
       });
 
-      // Also store a cluster-wide snapshot in the 'cluster' namespace
-      await this.prismaService.metricSnapshot.create({
-        data: {
-          namespace: '__cluster__',
-          cpuUsage: totalCPU,
-          memoryUsage: totalMemoryBytes / (1024 * 1024 * 1024),
-          podCount: pods.length,
-        },
-      });
+      // For each namespace, fetch the last saved snapshot and
+      // compare — only write if something meaningfully changed
+      let savedCount = 0;
+      let skippedCount = 0;
 
-      await Promise.all(snapshotPromises);
+      await Promise.all(
+        snapshotsToEvaluate.map(async (snapshot) => {
+          const hasChanged = await this.hasSnapshotChanged(snapshot);
 
-      this.logger.log(
-        `Snapshot saved — ${pods.length} pods, ${nodes.length} nodes, ` +
-          `${runningPods} running, ${namespaces.length} namespaces`,
+          if (hasChanged) {
+            await this.prismaService.metricSnapshot.create({
+              data: snapshot,
+            });
+            savedCount++;
+          } else {
+            skippedCount++;
+          }
+        }),
       );
 
-      // Invalidate Redis cache after each snapshot
-      // so the next API request gets fresh data
+      this.logger.log(
+        `Snapshot complete — saved: ${savedCount}, skipped (no change): ${skippedCount}`,
+      );
+
       await this.kubernetesService.invalidateCache();
     } catch (error) {
       this.logger.error(`Failed to collect metrics snapshot: ${error.message}`);
     }
+  }
+
+  // Compare incoming snapshot with the last saved one for this namespace
+  // Returns true if we should save, false if nothing meaningful changed
+  private async hasSnapshotChanged(incoming: {
+    namespace: string;
+    cpuUsage: number;
+    memoryUsage: number;
+    podCount: number;
+  }): Promise<boolean> {
+    const last = await this.prismaService.metricSnapshot.findFirst({
+      where: { namespace: incoming.namespace },
+      orderBy: { recordedAt: 'desc' },
+    });
+
+    // No previous snapshot — always save the first one
+    if (!last) return true;
+
+    // Pod count change is the most important signal
+    // Any change in pod count always gets saved
+    if (last.podCount !== incoming.podCount) return true;
+
+    // For CPU and memory, use a threshold to ignore tiny
+    // floating point fluctuations that aren't meaningful
+    // 0.1 CPU cores or 0.1 GiB memory = worth recording
+    const CPU_THRESHOLD = 0.1;
+    const MEMORY_THRESHOLD = 0.1;
+
+    if (Math.abs(last.cpuUsage - incoming.cpuUsage) > CPU_THRESHOLD)
+      return true;
+    if (Math.abs(last.memoryUsage - incoming.memoryUsage) > MEMORY_THRESHOLD)
+      return true;
+
+    // Nothing meaningful changed — skip this write
+    return false;
   }
 
   private parseCPU(cpu: string): number {
