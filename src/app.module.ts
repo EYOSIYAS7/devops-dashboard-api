@@ -8,8 +8,9 @@ import { NodesModule } from './nodes/nodes.module';
 import { DeploymentsModule } from './deployments/deployments.module';
 import { NamespacesModule } from './namespaces/namespaces.module';
 import { MetricsModule } from './metrics/metrics.module';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ClusterModule } from './cluster/cluster.module';
+import { BullModule } from '@nestjs/bull';
 
 @Module({
   imports: [
@@ -17,6 +18,19 @@ import { ClusterModule } from './cluster/cluster.module';
     // in every module — available everywhere automatically
     ConfigModule.forRoot({
       isGlobal: true,
+    }),
+
+    // Register Bull globally with Redis connection
+    // Bull uses Redis as its queue storage backend —
+    // jobs are stored in Redis and picked up by workers
+    BullModule.forRootAsync({
+      useFactory: (configService: ConfigService) => ({
+        redis: {
+          host: configService.get<string>('REDIS_HOST', 'localhost'),
+          port: configService.get<number>('REDIS_PORT', 6379),
+        },
+      }),
+      inject: [ConfigService],
     }),
     PrismaModule,
     KubernetesModule,
