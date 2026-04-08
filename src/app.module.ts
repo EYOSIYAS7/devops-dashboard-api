@@ -11,6 +11,7 @@ import { MetricsModule } from './metrics/metrics.module';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ClusterModule } from './cluster/cluster.module';
 import { BullModule } from '@nestjs/bull';
+import { AlertsModule } from './alerts/alerts.module';
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ import { BullModule } from '@nestjs/bull';
     DeploymentsModule,
     NamespacesModule,
     MetricsModule,
+    AlertsModule,
     ClusterModule,
   ],
   controllers: [AppController],

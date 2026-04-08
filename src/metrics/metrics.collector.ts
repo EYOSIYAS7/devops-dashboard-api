@@ -19,18 +19,29 @@ export class MetricsCollector implements OnModuleInit {
 
   // the producer
   async onModuleInit() {
-    // Clear any leftover jobs from previous runs
+    // Fully clear out all types of leftover/ghost jobs
+    await this.metricsQueue.clean(0, 'completed');
+    await this.metricsQueue.clean(0, 'wait');
+    await this.metricsQueue.clean(0, 'active');
+    await this.metricsQueue.clean(0, 'delayed');
+    await this.metricsQueue.clean(0, 'failed');
     await this.metricsQueue.empty();
 
-    // Add a repeating job that fires every 30 seconds
+    // Remove old repeatable job configurations to prevent duplicates on restart
+    const repeatableJobs = await this.metricsQueue.getRepeatableJobs();
+    for (const job of repeatableJobs) {
+      await this.metricsQueue.removeRepeatableByKey(job.key);
+    }
+
+    // Add a repeating job that fires every 5 minutes
     // repeat.every is in milliseconds
-    // jobId prevents duplicate jobs if the app restarts
+    // Note: Do NOT use a static `jobId` here, otherwise Bull will block all 
+    // future repeatable runs because a job with that ID already exists in the completed set!
     await this.metricsQueue.add(
       'collect-snapshot', // job name
       {},
       {
         repeat: { every: 300000 },
-        jobId: 'metrics-snapshot-repeater',
         removeOnComplete: 10, // Keep only last 10 completed jobs in Redis
         removeOnFail: 5,
       },
