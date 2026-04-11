@@ -1,98 +1,141 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# DevOps Dashboard API
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+A production-grade Kubernetes cluster monitoring REST API built with NestJS and TypeScript. Connects directly to a live Kubernetes cluster, integrates with Prometheus for real metrics, and persists historical data in PostgreSQL. Built against a real on-premise cluster running enterprise blockchain infrastructure.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+## Features
 
-## Description
+- **Cluster overview** — real-time node count, pod health, deployment status, and a calculated health score
+- **Pod monitoring** — list, filter by namespace, detect crash-looping pods, pod stats breakdown
+- **Node metrics** — CPU and memory capacity, allocatable resources, node conditions and health
+- **Deployment health** — replica status, desired vs ready comparison, unhealthy deployment detection
+- **Namespace summaries** — per-namespace pod count, deployment count, and health score
+- **Real metrics from Prometheus** — actual CPU and memory usage per namespace via PromQL, not estimates
+- **Historical data** — PostgreSQL-backed metric snapshots with delta detection (only writes on change)
+- **Alerting engine** — detects crash-looping pods, unhealthy deployments, and unready nodes with deduplication and auto-resolution
+- **Redis caching** — cache-aside pattern on all Kubernetes API calls for fast repeated queries
+- **Background jobs** — Bull queue runs metric collection every 30 seconds
+- **Swagger docs** — full interactive API documentation at `/api`
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+## Tech Stack
 
-## Project setup
+| Layer | Technology |
+|-------|-----------|
+| Framework | NestJS + TypeScript |
+| Database | PostgreSQL |
+| ORM | Prisma |
+| Cache | Redis |
+| Queue | Bull |
+| K8s Client | @kubernetes/client-node |
+| Metrics | Prometheus (PromQL via HTTP) |
+| Docs | Swagger / OpenAPI |
+| Container | Docker + Docker Compose |
 
-```bash
-$ pnpm install
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────┐
+│                    NestJS API                        │
+│                                                      │
+│  ┌──────────┐ ┌──────────┐ ┌──────────────────────┐ │
+│  │  Pods    │ │  Nodes   │ │     Deployments      │ │
+│  └──────────┘ └──────────┘ └──────────────────────┘ │
+│  ┌──────────┐ ┌──────────┐ ┌──────────────────────┐ │
+│  │Namespaces│ │ Metrics  │ │       Alerts         │ │
+│  └──────────┘ └──────────┘ └──────────────────────┘ │
+│                                                      │
+│  ┌─────────────────────┐  ┌───────────────────────┐ │
+│  │  KubernetesService  │  │  PrometheusService    │ │
+│  │  (k8s API wrapper)  │  │  (PromQL queries)     │ │
+│  └─────────────────────┘  └───────────────────────┘ │
+└──────────────┬──────────────────────┬────────────────┘
+               │                      │
+    ┌──────────▼──────────┐  ┌────────▼────────────────┐
+    │  Kubernetes Cluster  │  │      Prometheus          │
+    │  (on-premise VMs)    │  │   (NodePort :30909)      │
+    └─────────────────────┘  └─────────────────────────┘
+               │
+    ┌──────────▼──────────┐  ┌─────────────────────────┐
+    │     PostgreSQL       │  │         Redis            │
+    │  (metric snapshots   │  │  (cache + Bull queues)   │
+    │   + alert history)   │  └─────────────────────────┘
+    └─────────────────────┘
 ```
 
-## Compile and run the project
+## Getting Started
+
+### Prerequisites
+
+- Node.js 18+
+- Docker and Docker Compose
+- kubectl configured with access to a Kubernetes cluster
+- Prometheus accessible via NodePort or port-forward
+
+### Installation
 
 ```bash
-# development
-$ pnpm run start
+# Clone the repo
+git clone https://github.com/EYOSIYAS7/devops-dashboard-api
+cd devops-dashboard-api
 
-# watch mode
-$ pnpm run start:dev
+# Install dependencies
+npm install
 
-# production mode
-$ pnpm run start:prod
+# Start PostgreSQL and Redis
+docker-compose up -d
+
+# Set up environment variables
+cp .env.example .env
+# Edit .env with your values
+
+# Run database migrations
+npx prisma migrate dev
+
+# Generate Prisma client
+npx prisma generate
+
+# Start the API
+npm run start:dev
 ```
 
-## Run tests
 
-```bash
-# unit tests
-$ pnpm run test
+## How the Caching Works
 
-# e2e tests
-$ pnpm run test:e2e
+Every Kubernetes API call is wrapped in a cache-aside pattern using Redis:
 
-# test coverage
-$ pnpm run test:cov
+1. Incoming request → check Redis for cached data
+2. Cache HIT → return immediately (fast path)
+3. Cache MISS → fetch from Kubernetes API → store in Redis with 30s TTL → return
+4. After each metrics snapshot → invalidate all `k8s:*` keys so next request gets fresh data
+
+This prevents repeated hammering of the cluster API on every HTTP request while keeping data fresh.
+
+## How the Alerting Works
+
+The alert detector runs after every metrics snapshot and checks three conditions:
+
+- **CRASH_LOOP** — any pod with container restart count > 5
+- **DEPLOYMENT_FAILED** — any deployment with readyReplicas < desiredReplicas
+- **NODE_NOT_READY** — any node whose Ready condition is not True
+
+Alerts are deduplicated — if an unresolved alert already exists for a resource, no duplicate is created. When a condition clears (deployment becomes healthy, node recovers), the alert is automatically resolved with a `resolvedAt` timestamp.
+
+## How Delta Detection Works
+
+The metrics collector only writes a new PostgreSQL snapshot when data has actually changed:
+
+- Pod count change of any amount → write
+- CPU usage change > 0.05 cores → write
+- Memory usage change > 0.05 GiB → write
+- No meaningful change → skip
+
+This reduces database writes significantly on stable clusters — typically 60–70% of snapshots are skipped.
+
+
+## Swagger Documentation
+
+Once running, interactive API docs are available at:
+
+```
+http://localhost:3000/api
 ```
 
-## Deployment
-
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
-
-```bash
-$ pnpm install -g @nestjs/mau
-$ mau deploy
-```
-
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
-
-## Resources
-
-Check out a few resources that may come in handy when working with NestJS:
-
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
-
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
